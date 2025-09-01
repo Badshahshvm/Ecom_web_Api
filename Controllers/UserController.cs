@@ -1,4 +1,4 @@
-﻿//using Microsoft.AspNetCore.Mvc;
+//using Microsoft.AspNetCore.Mvc;
 //using Microsoft.EntityFrameworkCore;
 //using Ecomm_web_api.Data;
 //using Ecomm_web_api.Models.Entity;
@@ -238,6 +238,74 @@ namespace Ecomm_web_api.Controllers
 
             return Ok(new { message = "Item added to cart successfully" });
         }
+        [HttpPost("{userId:guid}/place-order")]
+        public async Task<IActionResult> PlaceOrder(Guid userId)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+                return NotFound(new { StatusCode = 404, StatusMessage = "User not found" });
+
+            var cartItems = await _context.Carts
+                .Include(c => c.Medicine)
+                .Where(c => c.UserId == userId)
+                .ToListAsync();
+
+            if (!cartItems.Any())
+                return BadRequest(new { StatusCode = 400, StatusMessage = "Cart is empty" });
+
+            // ✅ Generate order number (auto increment based on last order)
+            int nextOrderNumber = 1;
+            if (await _context.Orders.AnyAsync())
+            {
+                nextOrderNumber = await _context.Orders.MaxAsync(o => o.OrderNumber) + 1;
+            }
+
+            // ✅ Create Order
+            var order = new Order
+            {
+                Id = Guid.NewGuid(),
+                UserId = userId,
+                OrderNumber = nextOrderNumber,
+                OrderTotal = (int)cartItems.Sum(c => c.TotalPrice), // assuming TotalPrice = UnitPrice * Quantity - Discount
+                Status = OrderStatus.Pending
+            };
+
+            _context.Orders.Add(order);
+
+            // ✅ Save OrderItems
+            foreach (var item in cartItems)
+            {
+                var orderItem = new OrderItem
+                {
+                    Id = Guid.NewGuid(),
+                    OrderId = order.Id,
+                    MedicineId = item.MedicineId,
+                    Quantity = item.Quantity,
+                    UnitPrice = item.UnitPrice,
+                    Discount = item.Discount
+                };
+                _context.OrderItems.Add(orderItem);
+            }
+
+            // ✅ Clear Cart
+            _context.Carts.RemoveRange(cartItems);
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new
+            {
+                StatusCode = 200,
+                StatusMessage = "Order has been placed successfully",
+                OrderId = order.Id,
+                OrderNumber = order.OrderNumber,
+                TotalAmount = order.OrderTotal,
+                Status = order.Status.ToString()
+            });
+        }
+
+
+
+
     }
 
     // DTO for login request
